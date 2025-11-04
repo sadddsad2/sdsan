@@ -5,6 +5,10 @@ on:
     - cron: '0 14 * * *'  # 北京时间 22:00
   workflow_dispatch:
 
+# Add permissions for the workflow
+permissions:
+  contents: write
+  
 jobs:
   validate-proxies:
     runs-on: ubuntu-latest
@@ -12,6 +16,8 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
       
     - name: Setup Go
       uses: actions/setup-go@v4
@@ -112,7 +118,8 @@ jobs:
       run: |
         if [ -s all_proxies.txt ]; then
           echo "Starting validation..."
-          ./proxy-scanner -input all_proxies.txt -o validated_proxies.txt || true
+          # FIX: Changed -input to -in
+          ./proxy-scanner -in all_proxies.txt -o validated_proxies.txt || true
           
           if [ -s validated_proxies.txt ]; then
             echo "✓ Validation completed: $(wc -l < validated_proxies.txt) valid proxies"
@@ -228,8 +235,10 @@ jobs:
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add README.md || true
-        git diff --quiet && git diff --staged --quiet || git commit -m "Update stats: ${{ env.TOTAL_PROXIES }} proxies"
-        git push || true
+        git diff --quiet && git diff --staged --quiet || {
+          git commit -m "Update stats: ${{ env.TOTAL_PROXIES }} proxies"
+          git push
+        }
         
     - name: Create Release
       uses: softprops/action-gh-release@v1
