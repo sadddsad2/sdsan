@@ -1,16 +1,10 @@
 # SOCKS5 代理源列表
 # 每行一个URL，支持注释（#开头）和空行
-
-# ProxyScrape API
-https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=5000&country=all
-
 # GitHub 公开代理列表
 https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt
 https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt
 https://raw.githubusercontent.com/mmpx12/proxy-list/master/socks5.txt
 https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt
-https://raw.githubusercontent.com/openproxylist/openproxylist/main/socks5.txt
-https://raw.githubusercontent.com/ProxyList-GitHub/proxy-list/main/socks5.txt
 
 # 其他公开源
 https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-socks5.txt
@@ -18,4 +12,4 @@ https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt
 https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks5.txt
 
 # 你可以在这里添加更多源
-# https://example.com/proxy-list.txt
+
