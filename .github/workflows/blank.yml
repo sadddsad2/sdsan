@@ -1,0 +1,270 @@
+name: SOCKS5 Proxy Validator
+
+on:
+  schedule:
+    - cron: '0 14 * * *'  # 北京时间 22:00
+  workflow_dispatch:
+
+jobs:
+  validate-proxies:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+        
+    - name: Setup scanner
+      run: |
+        git clone https://github.com/Yariya/Zmap-ProxyScanner.git
+        cd Zmap-ProxyScanner
+        go build -o ../proxy-scanner
+        cd ..
+        
+    - name: Create config
+      run: |
+        cat > config.json << 'EOF'
+        {
+          "check-site": "https://google.com",
+          "proxy-type": "socks5",
+          "http_threads": 5000,
+          "headers": {
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+          },
+          "print_ips": {
+            "enabled": false,
+            "display-ip-info": false
+          },
+          "timeout": {
+            "http_timeout": 3,
+            "socks4_timeout": 3,
+            "socks5_timeout": 3
+          }
+        }
+        EOF
+        
+    - name: Fetch proxy sources from url.txt
+      run: |
+        mkdir -p raw
+        
+        # 检查 url.txt 是否存在
+        if [ ! -f "url.txt" ]; then
+          echo "Error: url.txt not found!"
+          echo "Please create url.txt with one proxy source URL per line"
+          exit 1
+        fi
+        
+        # 读取 url.txt 并下载每个源
+        line_num=0
+        while IFS= read -r url || [ -n "$url" ]; do
+          # 跳过空行和注释
+          if [ -z "$url" ] || [[ "$url" =~ ^[[:space:]]*# ]]; then
+            continue
+          fi
+          
+          line_num=$((line_num + 1))
+          echo "Fetching source $line_num: $url"
+          
+          # 下载代理列表
+          curl -fsSL --connect-timeout 10 --max-time 30 "$url" \
+            -o "raw/source_${line_num}.txt" || {
+            echo "Warning: Failed to fetch $url"
+            continue
+          }
+          
+          # 检查文件是否有效
+          if [ -s "raw/source_${line_num}.txt" ]; then
+            echo "✓ Successfully fetched source $line_num ($(wc -l < raw/source_${line_num}.txt) lines)"
+          else
+            echo "✗ Empty response from source $line_num"
+            rm -f "raw/source_${line_num}.txt"
+          fi
+          
+        done < url.txt
+        
+        # 统计下载的源数量
+        source_count=$(ls -1 raw/*.txt 2>/dev/null | wc -l)
+        echo ""
+        echo "================================"
+        echo "Total sources downloaded: $source_count"
+        echo "================================"
+        
+    - name: Merge and deduplicate
+      run: |
+        # 合并所有源
+        cat raw/*.txt 2>/dev/null | \
+          grep -E '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]+$' | \
+          sort -u > all_proxies.txt
+          
+        total_unique=$(wc -l < all_proxies.txt)
+        echo ""
+        echo "================================"
+        echo "Total unique proxies: $total_unique"
+        echo "================================"
+        
+    - name: Validate proxies
+      timeout-minutes: 30
+      run: |
+        if [ -s all_proxies.txt ]; then
+          echo "Starting validation..."
+          ./proxy-scanner -input all_proxies.txt -o validated_proxies.txt || true
+          
+          if [ -s validated_proxies.txt ]; then
+            echo "✓ Validation completed: $(wc -l < validated_proxies.txt) valid proxies"
+          else
+            echo "✗ No valid proxies found"
+          fi
+        else
+          echo "No proxies to validate"
+          touch validated_proxies.txt
+        fi
+        
+    - name: Format output
+      run: |
+        # 确保只有 ip:port 格式
+        if [ -s validated_proxies.txt ]; then
+          grep -E '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]+$' validated_proxies.txt | \
+            sort -t: -k2 -n | \
+            sort -u > socks5_proxies.txt
+        else
+          touch socks5_proxies.txt
+        fi
+        
+        TOTAL=$(wc -l < socks5_proxies.txt)
+        DATE=$(date +%Y%m%d-%H%M%S)
+        SOURCE_COUNT=$(ls -1 raw/*.txt 2>/dev/null | wc -l)
+        
+        echo "TOTAL_PROXIES=$TOTAL" >> $GITHUB_ENV
+        echo "SCAN_DATE=$DATE" >> $GITHUB_ENV
+        echo "SOURCE_COUNT=$SOURCE_COUNT" >> $GITHUB_ENV
+        
+        # 创建带日期的备份
+        cp socks5_proxies.txt socks5_proxies_${DATE}.txt
+        
+        # 统计信息
+        echo "## Scan Statistics" > stats.txt
+        echo "" >> stats.txt
+        echo "- Total validated: $TOTAL" >> stats.txt
+        echo "- Scan date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> stats.txt
+        echo "- Sources checked: $SOURCE_COUNT" >> stats.txt
+        
+    - name: Generate README
+      run: |
+        cat > README.md << 'ENDREADME'
+        # 🌐 SOCKS5 Proxy List
+        
+        [![Update](https://github.com/${{ github.repository }}/actions/workflows/scan-proxies.yml/badge.svg)](https://github.com/${{ github.repository }}/actions)
+        [![Proxies](https://img.shields.io/badge/proxies-${{ env.TOTAL_PROXIES }}-brightgreen)]()
+        [![Updated](https://img.shields.io/badge/updated-${{ env.SCAN_DATE }}-blue)]()
+        
+        Automatically validated SOCKS5 proxies, updated daily at 22:00 Beijing Time.
+        
+        ## 📥 Download
+        
+        **Latest:** [socks5_proxies.txt](https://github.com/${{ github.repository }}/releases/latest/download/socks5_proxies.txt)
+        
+        ## 📊 Statistics
+        
+        - **Total Proxies:** ${{ env.TOTAL_PROXIES }}
+        - **Last Update:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        - **Sources Used:** ${{ env.SOURCE_COUNT }}
+        - **Format:** `ip:port`
+        
+        ## 🔄 Update Schedule
+        
+        Automatically updates every day at 22:00 (UTC+8)
+        
+        ## ⚙️ Sources
+        
+        Proxies are fetched from sources listed in `url.txt` and validated before publishing.
+        
+        To add your own sources, edit `url.txt` (one URL per line).
+        
+        ## 📝 Format
+        
+        ```
+        1.2.3.4:1080
+        5.6.7.8:1080
+        9.10.11.12:9050
+        ```
+        
+        ## ⚠️ Disclaimer
+        
+        - Proxies collected from public internet
+        - No guarantee of availability or security
+        - Use at your own risk
+        - Verify before use in production
+        - Respect local laws and regulations
+        
+        ## 🛠️ Usage Example
+        
+        ```bash
+        # Download latest list
+        curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/socks5_proxies.txt -o proxies.txt
+        
+        # Use with curl
+        curl -x socks5://1.2.3.4:1080 https://api.ipify.org
+        
+        # Test connectivity
+        curl --proxy socks5://1.2.3.4:1080 --connect-timeout 5 https://google.com
+        ```
+        
+        ## 📜 License
+        
+        MIT License - Use freely with attribution
+        
+        ---
+        
+        **Note:** This list is for educational and testing purposes only.
+        ENDREADME
+        
+    - name: Commit stats
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add README.md || true
+        git diff --quiet && git diff --staged --quiet || git commit -m "Update stats: ${{ env.TOTAL_PROXIES }} proxies"
+        git push || true
+        
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ env.SCAN_DATE }}
+        name: SOCKS5 Proxies ${{ env.SCAN_DATE }}
+        body: |
+          ## 📡 SOCKS5 Proxy List
+          
+          **Valid Proxies:** ${{ env.TOTAL_PROXIES }}
+          **Scan Time:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          **Sources:** ${{ env.SOURCE_COUNT }}
+          
+          ### 📥 Download
+          - [socks5_proxies.txt](https://github.com/${{ github.repository }}/releases/download/${{ env.SCAN_DATE }}/socks5_proxies.txt)
+          
+          ### 📋 Format
+          ```
+          ip:port
+          ```
+          
+          ### ⚡ Quick Test
+          ```bash
+          curl -x socks5://[IP]:[PORT] https://api.ipify.org
+          ```
+          
+          ### ⚠️ Warning
+          - Public proxies may be insecure
+          - Validate before production use
+          - No guarantee of availability
+          
+        files: |
+          socks5_proxies.txt
+          socks5_proxies_*.txt
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
